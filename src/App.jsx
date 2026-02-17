@@ -37,15 +37,8 @@ const Sparkline = ({ data, isPositive }) => {
     return `${x},${y}`;
   }).join(" ");
   const color = isPositive ? "#4ade80" : "#f87171";
-  const fillId = `fill_${Math.random().toString(36).slice(2)}`;
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
-      <defs>
-        <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
       <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -80,12 +73,16 @@ export default function App() {
   const [manualP2P, setManualP2P] = useState("");
   const [autoP2P, setAutoP2P] = useState(null);
   const [p2pLoading, setP2pLoading] = useState(true);
-  const [p2pError, setP2pError] = useState(false);
-  const [p2pMode, setP2pMode] = useState("auto"); // "auto" o "manual"
+  const [p2pError, setP2pError] = useState(null);
+  const [p2pMode, setP2pMode] = useState("auto");
   const [cryptoData, setCryptoData] = useState([]);
   const [sparklines, setSparklines] = useState({});
   const [cryptoLoading, setCryptoLoading] = useState(true);
-  const [portfolio, setPortfolio] = useState({ usdc: "", btc: "", eth: "", sol: "" });
+  const [portfolio, setPortfolio] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("portfolio") || '{"usdc":"","btc":"","eth":"","sol":""}');
+    } catch { return {usdc:"",btc:"",eth:"",sol:""}; }
+  });
   const [history, setHistory] = useState(getHistory());
   const [alerts, setAlerts] = useState(getAlerts());
   const [newAlert, setNewAlert] = useState({ symbol: "CYPR", target: "", direction: "above" });
@@ -98,6 +95,11 @@ export default function App() {
     { id: "solana",      symbol: "SOL",     featured: false },
     { id: "useless-v3",  symbol: "USELESS", featured: false },
   ];
+
+  // Save portfolio changes
+  useEffect(() => {
+    localStorage.setItem("portfolio", JSON.stringify(portfolio));
+  }, [portfolio]);
 
   // TRM
   useEffect(() => {
@@ -115,36 +117,34 @@ export default function App() {
     const fetchP2P = async () => {
       try {
         setP2pLoading(true);
+        setP2pError(null);
         const res = await fetch("/api/p2p");
         const data = await res.json();
         if (data.price) {
           setAutoP2P(data);
-          setP2pError(false);
-          // Si está en modo auto, actualizar el valor
           if (p2pMode === "auto") setManualP2P(data.price.toString());
         } else {
-          setP2pError(true);
+          setP2pError(data.error || "Sin datos");
         }
       } catch (e) {
-        setP2pError(true);
+        setP2pError("Error de conexión");
         console.error("P2P error:", e);
       } finally {
         setP2pLoading(false);
       }
     };
     fetchP2P();
-    const iv = setInterval(fetchP2P, 180000); // cada 3 min
+    const iv = setInterval(fetchP2P, 180000);
     return () => clearInterval(iv);
   }, [p2pMode]);
 
-  // Crypto prices + sparklines (1 sola llamada + cache local)
+  // Crypto prices + sparklines (1 llamada + cache)
   useEffect(() => {
-    // Cargar cache inmediatamente si existe
     try {
       const cached = localStorage.getItem("crypto_cache");
       if (cached) {
         const { data, sparks, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 120000) { // cache válido por 2 min
+        if (Date.now() - ts < 120000) {
           setCryptoData(data);
           setSparklines(sparks);
           setCryptoLoading(false);
@@ -155,22 +155,17 @@ export default function App() {
     const fetchCrypto = async () => {
       try {
         const ids = cryptoIds.map(c => c.id).join(",");
-        // UN SOLO request con sparkline incluido
         const res = await fetch(
           `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h&sparkline=true`
         );
         const raw = await res.json();
-
         const ordered = cryptoIds.map(c => ({ ...c, ...raw.find(d => d.id === c.id) }));
         const spMap = {};
         raw.forEach(c => {
           if (c.sparkline_in_7d?.price) spMap[c.id] = c.sparkline_in_7d.price.slice(-20);
         });
-
         setCryptoData(ordered);
         setSparklines(spMap);
-
-        // Guardar en cache
         try {
           localStorage.setItem("crypto_cache", JSON.stringify({ data: ordered, sparks: spMap, ts: Date.now() }));
         } catch (e) {}
@@ -196,7 +191,7 @@ export default function App() {
         setAlertMsg(`🔔 ${alert.symbol} bajó a $${price.toFixed(4)} (meta: $${alert.target})`);
       }
     });
-  }, [cryptoData]);
+  }, [cryptoData, alerts]);
 
   const formatPrice = (p) =>
     !p ? "0.00"
@@ -206,7 +201,8 @@ export default function App() {
     : p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const trmValue   = trmData ? parseFloat(trmData.valor) : 4050;
-  const p2pValue   = manualP2P ? parseFloat(manualP2P) : Math.round(trmValue * 1.032);
+  const p2pValueRaw = p2pMode === "auto" && autoP2P?.price ? parseFloat(autoP2P.price) : parseFloat(manualP2P) || Math.round(trmValue * 1.032);
+  const p2pValue   = p2pValueRaw;
   const spreadNum  = ((p2pValue - trmValue) / trmValue * 100);
   const isCheap    = spreadNum < 2.5;
   const isExpensive = spreadNum > 3.5;
@@ -220,7 +216,6 @@ export default function App() {
   // ── DASHBOARD ──
   const Dashboard = () => (
     <div style={{ paddingBottom: 16 }}>
-      {/* HEADER compacto */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 20, paddingBottom: 20 }}>
         <CDLogo />
         <div style={{
@@ -234,7 +229,7 @@ export default function App() {
 
       {alertMsg && (
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-          style={{ background: "rgba(0,198,255,0.1)", border: "1px solid rgba(0,198,255,0.4)", borderRadius: 16, padding: "10px 16px", marginBottom: 14, color: "#00c6ff", fontSize: 13, fontWeight: 600 }}
+          style={{ background: "rgba(0,198,255,0.1)", border: "1px solid rgba(0,198,255,0.4)", borderRadius: 16, padding: "10px 16px", marginBottom: 14, color: "#00c6ff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
           onClick={() => setAlertMsg("")}
         >
           {alertMsg} <span style={{ color: "#555", marginLeft: 8 }}>✕</span>
@@ -245,7 +240,6 @@ export default function App() {
         <div style={{ textAlign: "center", padding: "60px 0", color: "#555" }}>Cargando...</div>
       ) : (
         <>
-          {/* GRID 2 col: TRM + VISA */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
             {[
               { label: "🇨🇴 TRM", value: trmValue.toLocaleString("es-CO", { maximumFractionDigits: 0 }), color: "#00c6ff", border: "rgba(0,198,255,0.2)" },
@@ -262,10 +256,10 @@ export default function App() {
             ))}
           </div>
 
-          {/* INPUT P2P — AUTO + MANUAL */}
+          {/* P2P AUTO/MANUAL */}
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}
-            style={{ background: "#111118", borderRadius: 20, padding: "16px 18px", marginBottom: 10, border: `1.5px solid ${manualP2P ? statusBorder : "rgba(250,204,21,0.2)"}`, transition: "border 0.3s" }}
+            style={{ background: "#111118", borderRadius: 20, padding: "16px 18px", marginBottom: 10, border: `1.5px solid ${statusBorder}`, transition: "border 0.3s" }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <p style={{ color: "#555", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>
@@ -273,10 +267,7 @@ export default function App() {
               </p>
               <div style={{ display: "flex", gap: 6 }}>
                 {["auto", "manual"].map(m => (
-                  <button key={m} onClick={() => {
-                    setP2pMode(m);
-                    if (m === "auto" && autoP2P?.price) setManualP2P(autoP2P.price.toString());
-                  }} style={{
+                  <button key={m} onClick={() => setP2pMode(m)} style={{
                     background: p2pMode === m ? "rgba(250,204,21,0.2)" : "transparent",
                     border: `1px solid ${p2pMode === m ? "rgba(250,204,21,0.5)" : "#333"}`,
                     borderRadius: 8, padding: "3px 10px",
@@ -293,12 +284,13 @@ export default function App() {
               <div>
                 {p2pLoading && !autoP2P ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0" }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#facc15" }} />
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#facc15", animation: "pulse 1s infinite" }} />
                     <p style={{ color: "#555", fontSize: 14 }}>Consultando Binance P2P...</p>
+                    <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
                   </div>
                 ) : p2pError ? (
                   <div>
-                    <p style={{ color: "#f87171", fontSize: 13, marginBottom: 6 }}>⚠️ No se pudo conectar con Binance P2P</p>
+                    <p style={{ color: "#f87171", fontSize: 13, marginBottom: 6 }}>⚠️ {p2pError}</p>
                     <button onClick={() => setP2pMode("manual")} style={{ background: "rgba(248,113,113,0.15)", border: "none", borderRadius: 8, padding: "6px 12px", color: "#f87171", fontSize: 12, cursor: "pointer", fontFamily: "Outfit, sans-serif" }}>
                       Cambiar a manual
                     </button>
@@ -325,10 +317,10 @@ export default function App() {
             ) : (
               <div>
                 <input
-                  type="number"
+                  type="tel"
                   placeholder="Ingresa precio P2P..."
                   value={manualP2P}
-                  onChange={(e) => setManualP2P(e.target.value)}
+                  onChange={(e) => setManualP2P(e.target.value.replace(/[^0-9.]/g, ""))}
                   onBlur={() => {
                     if (manualP2P && parseFloat(manualP2P) > 0) {
                       const entry = { p2p: parseFloat(manualP2P), trm: trmValue, spread: spreadNum.toFixed(2) };
@@ -342,7 +334,6 @@ export default function App() {
                     borderRadius: 14, padding: "12px 14px",
                     color: "#facc15", fontSize: 28, fontWeight: 800,
                     outline: "none", fontFamily: "Outfit, sans-serif",
-                    MozAppearance: "textfield", appearance: "none",
                   }}
                 />
                 <p style={{ color: "#444", fontSize: 11, marginTop: 6 }}>
@@ -460,6 +451,7 @@ export default function App() {
       { key: "sol",  label: "SOL",  color: "#9945ff" },
     ];
     const getUSD = (key, amount) => {
+      if (key === "usdc") return parseFloat(amount || 0); // USDC = 1:1 USD
       const coin = cryptoData.find(c => c.symbol?.toLowerCase() === key);
       return coin ? (parseFloat(amount || 0) * coin.current_price) : 0;
     };
@@ -473,7 +465,6 @@ export default function App() {
           <span style={{ color: "#555", fontSize: 12 }}>en tiempo real</span>
         </div>
 
-        {/* Total */}
         <div style={{ background: "linear-gradient(135deg,rgba(0,198,255,0.1),rgba(124,58,237,0.1))", border: "1.5px solid rgba(0,198,255,0.3)", borderRadius: 22, padding: "20px 22px", marginBottom: 16, textAlign: "center" }}>
           <p style={{ color: "#555", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>Total Portfolio</p>
           <p style={{ color: "#fff", fontSize: 36, fontWeight: 900, margin: "8px 0 2px" }}>
@@ -498,11 +489,13 @@ export default function App() {
                 </div>
               </div>
               <input
-                type="text"
-                inputMode="decimal"
+                type="tel"
                 placeholder={`Cantidad de ${f.label}...`}
                 value={portfolio[f.key]}
-                onChange={(e) => setPortfolio(prev => ({ ...prev, [f.key]: e.target.value }))}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9.]/g, "");
+                  setPortfolio(prev => ({ ...prev, [f.key]: raw }));
+                }}
                 style={{
                   width: "100%", boxSizing: "border-box",
                   background: "rgba(0,0,0,0.4)",
@@ -522,7 +515,6 @@ export default function App() {
   // ── HISTORIAL + ALERTAS ──
   const Settings = () => (
     <div style={{ paddingTop: 20, paddingBottom: 16 }}>
-      {/* HISTORIAL P2P */}
       <p style={{ color: "#fff", fontSize: 18, fontWeight: 800, marginBottom: 14 }}>📅 Historial P2P</p>
       {history.length === 0 ? (
         <div style={{ background: "#111118", borderRadius: 18, padding: 20, textAlign: "center", color: "#555", marginBottom: 24 }}>
@@ -551,7 +543,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ALERTAS */}
       <p style={{ color: "#fff", fontSize: 18, fontWeight: 800, marginBottom: 14 }}>🔔 Alertas de precio</p>
       <div style={{ background: "#111118", borderRadius: 18, padding: 18, marginBottom: 12, border: "1px solid #1a1a28" }}>
         <p style={{ color: "#555", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 }}>Nueva alerta</p>
@@ -573,11 +564,11 @@ export default function App() {
           </select>
         </div>
         <input
-          type="number"
+          type="tel"
           placeholder="Precio objetivo en USD..."
           value={newAlert.target}
-          onChange={e => setNewAlert(p => ({ ...p, target: e.target.value }))}
-          style={{ width: "100%", boxSizing: "border-box", background: "#0a0a0f", border: "1px solid #222", borderRadius: 12, padding: "10px 14px", color: "#facc15", fontSize: 16, fontWeight: 700, outline: "none", fontFamily: "Outfit, sans-serif", marginBottom: 10, MozAppearance: "textfield", appearance: "none" }}
+          onChange={e => setNewAlert(p => ({ ...p, target: e.target.value.replace(/[^0-9.]/g, "") }))}
+          style={{ width: "100%", boxSizing: "border-box", background: "#0a0a0f", border: "1px solid #222", borderRadius: 12, padding: "10px 14px", color: "#facc15", fontSize: 16, fontWeight: 700, outline: "none", fontFamily: "Outfit, sans-serif", marginBottom: 10 }}
         />
         <button
           onClick={() => {
@@ -639,7 +630,6 @@ export default function App() {
         </motion.div>
       </AnimatePresence>
 
-      {/* TAB BAR */}
       <div style={{
         position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
         width: "100%", maxWidth: 430,

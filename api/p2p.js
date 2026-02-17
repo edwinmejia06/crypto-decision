@@ -18,17 +18,23 @@ export default async function handler(req, res) {
       }
     );
 
-    const data = await response.json();
-    const ads = data?.ads || [];
+    if (!response.ok) {
+      return res.status(200).json({ 
+        price: null, 
+        error: `API p2p.army error ${response.status}` 
+      });
+    }
 
-    if (ads.length < 3) {
+    const data = await response.json();
+    
+    if (!data || data.status !== 1 || !data.ads || data.ads.length < 3) {
       return res.status(200).json({ 
         price: null, 
         error: "No hay suficientes compradores disponibles" 
       });
     }
 
-    const third = ads[2];
+    const third = data.ads[2];
 
     res.status(200).json({
       price: parseFloat(third.price),
@@ -38,6 +44,9 @@ export default async function handler(req, res) {
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      price: null,
+      error: error.message 
+    });
   }
 }
