@@ -106,24 +106,43 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Crypto prices + sparklines
+  // Crypto prices + sparklines (1 sola llamada + cache local)
   useEffect(() => {
+    // Cargar cache inmediatamente si existe
+    try {
+      const cached = localStorage.getItem("crypto_cache");
+      if (cached) {
+        const { data, sparks, ts } = JSON.parse(cached);
+        if (Date.now() - ts < 120000) { // cache válido por 2 min
+          setCryptoData(data);
+          setSparklines(sparks);
+          setCryptoLoading(false);
+        }
+      }
+    } catch (e) {}
+
     const fetchCrypto = async () => {
       try {
         const ids = cryptoIds.map(c => c.id).join(",");
-        const [marketsRes, sparkRes] = await Promise.all([
-          fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h`),
-          fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&sparkline=true`),
-        ]);
-        const markets = await marketsRes.json();
-        const sparks  = await sparkRes.json();
+        // UN SOLO request con sparkline incluido
+        const res = await fetch(
+          `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h&sparkline=true`
+        );
+        const raw = await res.json();
 
-        const ordered = cryptoIds.map(c => ({ ...c, ...markets.find(d => d.id === c.id) }));
-        setCryptoData(ordered);
-
+        const ordered = cryptoIds.map(c => ({ ...c, ...raw.find(d => d.id === c.id) }));
         const spMap = {};
-        sparks.forEach(c => { if (c.sparkline_in_7d?.price) spMap[c.id] = c.sparkline_in_7d.price.slice(-20); });
+        raw.forEach(c => {
+          if (c.sparkline_in_7d?.price) spMap[c.id] = c.sparkline_in_7d.price.slice(-20);
+        });
+
+        setCryptoData(ordered);
         setSparklines(spMap);
+
+        // Guardar en cache
+        try {
+          localStorage.setItem("crypto_cache", JSON.stringify({ data: ordered, sparks: spMap, ts: Date.now() }));
+        } catch (e) {}
       } catch (e) { console.error(e); }
       finally { setCryptoLoading(false); }
     };
@@ -271,7 +290,25 @@ export default function App() {
           {/* TRACKING */}
           <p style={{ color: "#fff", fontSize: 15, fontWeight: 700, marginBottom: 10 }}>Tracking</p>
           {cryptoLoading ? (
-            <div style={{ color: "#555", textAlign: "center", padding: 24 }}>Cargando precios...</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[...Array(5)].map((_, i) => (
+                <div key={i} style={{
+                  background: "linear-gradient(90deg, #111118 25%, #1a1a28 50%, #111118 75%)",
+                  backgroundSize: "200% 100%",
+                  animation: "shimmer 1.5s infinite",
+                  borderRadius: 18, padding: "12px 16px", height: 62,
+                  display: "flex", alignItems: "center", gap: 10,
+                }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#1a1a28" }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ width: 60, height: 12, background: "#1a1a28", borderRadius: 6, marginBottom: 6 }} />
+                    <div style={{ width: 40, height: 10, background: "#1a1a28", borderRadius: 6 }} />
+                  </div>
+                  <div style={{ width: 70, height: 14, background: "#1a1a28", borderRadius: 6 }} />
+                </div>
+              ))}
+              <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {cryptoData.map((c, i) => {
