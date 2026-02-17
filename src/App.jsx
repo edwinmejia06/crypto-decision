@@ -317,13 +317,18 @@ export default function App() {
             ) : (
               <div>
                 <input
-                  type="tel"
+                  type="text"
+                  inputMode="decimal"
                   placeholder="Ingresa precio P2P..."
-                  value={manualP2P}
-                  onChange={(e) => setManualP2P(e.target.value.replace(/[^0-9.]/g, ""))}
-                  onBlur={() => {
-                    if (manualP2P && parseFloat(manualP2P) > 0) {
-                      const entry = { p2p: parseFloat(manualP2P), trm: trmValue, spread: spreadNum.toFixed(2) };
+                  defaultValue={manualP2P}
+                  onInput={(e) => {
+                    e.target.value = e.target.value.replace(/[^0-9.]/g, "");
+                  }}
+                  onBlur={(e) => {
+                    const val = e.target.value.trim();
+                    setManualP2P(val);
+                    if (val && parseFloat(val) > 0) {
+                      const entry = { p2p: parseFloat(val), trm: trmValue, spread: spreadNum.toFixed(2) };
                       saveHistory(entry);
                       setHistory(getHistory());
                     }
@@ -489,7 +494,8 @@ export default function App() {
                 </div>
               </div>
               <input
-                type="tel"
+                type="text"
+                inputMode="decimal"
                 placeholder={`Cantidad de ${f.label}...`}
                 value={portfolio[f.key]}
                 onChange={(e) => {
@@ -564,10 +570,14 @@ export default function App() {
           </select>
         </div>
         <input
-          type="tel"
+          type="text"
+          inputMode="decimal"
           placeholder="Precio objetivo en USD..."
-          value={newAlert.target}
-          onChange={e => setNewAlert(p => ({ ...p, target: e.target.value.replace(/[^0-9.]/g, "") }))}
+          defaultValue={newAlert.target}
+          onInput={(e) => {
+            e.target.value = e.target.value.replace(/[^0-9.]/g, "");
+          }}
+          onBlur={(e) => setNewAlert(p => ({ ...p, target: e.target.value.trim() }))}
           style={{ width: "100%", boxSizing: "border-box", background: "#0a0a0f", border: "1px solid #222", borderRadius: 12, padding: "10px 14px", color: "#facc15", fontSize: 16, fontWeight: 700, outline: "none", fontFamily: "Outfit, sans-serif", marginBottom: 10 }}
         />
         <button
