@@ -78,6 +78,10 @@ export default function App() {
   const [trmData, setTrmData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [manualP2P, setManualP2P] = useState("");
+  const [autoP2P, setAutoP2P] = useState(null);
+  const [p2pLoading, setP2pLoading] = useState(true);
+  const [p2pError, setP2pError] = useState(false);
+  const [p2pMode, setP2pMode] = useState("auto"); // "auto" o "manual"
   const [cryptoData, setCryptoData] = useState([]);
   const [sparklines, setSparklines] = useState({});
   const [cryptoLoading, setCryptoLoading] = useState(true);
@@ -105,6 +109,33 @@ export default function App() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
+
+  // P2P Binance — 3er comprador automático
+  useEffect(() => {
+    const fetchP2P = async () => {
+      try {
+        setP2pLoading(true);
+        const res = await fetch("/api/p2p");
+        const data = await res.json();
+        if (data.price) {
+          setAutoP2P(data);
+          setP2pError(false);
+          // Si está en modo auto, actualizar el valor
+          if (p2pMode === "auto") setManualP2P(data.price.toString());
+        } else {
+          setP2pError(true);
+        }
+      } catch (e) {
+        setP2pError(true);
+        console.error("P2P error:", e);
+      } finally {
+        setP2pLoading(false);
+      }
+    };
+    fetchP2P();
+    const iv = setInterval(fetchP2P, 180000); // cada 3 min
+    return () => clearInterval(iv);
+  }, [p2pMode]);
 
   // Crypto prices + sparklines (1 sola llamada + cache local)
   useEffect(() => {
@@ -231,35 +262,93 @@ export default function App() {
             ))}
           </div>
 
-          {/* INPUT P2P */}
+          {/* INPUT P2P — AUTO + MANUAL */}
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}
             style={{ background: "#111118", borderRadius: 20, padding: "16px 18px", marginBottom: 10, border: `1.5px solid ${manualP2P ? statusBorder : "rgba(250,204,21,0.2)"}`, transition: "border 0.3s" }}
           >
-            <p style={{ color: "#555", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>🇨🇴 P2P Binance</p>
-            <input
-              type="number"
-              placeholder="Ingresa precio..."
-              value={manualP2P}
-              onChange={(e) => setManualP2P(e.target.value)}
-              onBlur={() => {
-                if (manualP2P && parseFloat(manualP2P) > 0) {
-                  const entry = { p2p: parseFloat(manualP2P), trm: trmValue, spread: spreadNum.toFixed(2) };
-                  saveHistory(entry);
-                  setHistory(getHistory());
-                }
-              }}
-              style={{
-                width: "100%", boxSizing: "border-box",
-                background: "rgba(0,0,0,0.4)", border: "none",
-                borderRadius: 14, padding: "12px 14px",
-                color: manualP2P ? statusColor : "#facc15",
-                fontSize: 28, fontWeight: 800,
-                outline: "none", fontFamily: "Outfit, sans-serif",
-              }}
-            />
-            {!manualP2P && (
-              <p style={{ color: "#444", fontSize: 11, marginTop: 6 }}>Estimado: {Math.round(trmValue * 1.032).toLocaleString("es-CO")} COP</p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <p style={{ color: "#555", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                🇨🇴 P2P Binance — 3er comprador
+              </p>
+              <div style={{ display: "flex", gap: 6 }}>
+                {["auto", "manual"].map(m => (
+                  <button key={m} onClick={() => {
+                    setP2pMode(m);
+                    if (m === "auto" && autoP2P?.price) setManualP2P(autoP2P.price.toString());
+                  }} style={{
+                    background: p2pMode === m ? "rgba(250,204,21,0.2)" : "transparent",
+                    border: `1px solid ${p2pMode === m ? "rgba(250,204,21,0.5)" : "#333"}`,
+                    borderRadius: 8, padding: "3px 10px",
+                    color: p2pMode === m ? "#facc15" : "#555",
+                    fontSize: 10, fontWeight: 700, cursor: "pointer",
+                    fontFamily: "Outfit, sans-serif", textTransform: "uppercase",
+                  }}>
+                    {m === "auto" ? "⚡ Auto" : "✏️ Manual"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {p2pMode === "auto" ? (
+              <div>
+                {p2pLoading && !autoP2P ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0" }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#facc15" }} />
+                    <p style={{ color: "#555", fontSize: 14 }}>Consultando Binance P2P...</p>
+                  </div>
+                ) : p2pError ? (
+                  <div>
+                    <p style={{ color: "#f87171", fontSize: 13, marginBottom: 6 }}>⚠️ No se pudo conectar con Binance P2P</p>
+                    <button onClick={() => setP2pMode("manual")} style={{ background: "rgba(248,113,113,0.15)", border: "none", borderRadius: 8, padding: "6px 12px", color: "#f87171", fontSize: 12, cursor: "pointer", fontFamily: "Outfit, sans-serif" }}>
+                      Cambiar a manual
+                    </button>
+                  </div>
+                ) : autoP2P ? (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                      <p style={{ color: statusColor, fontSize: 32, fontWeight: 900, lineHeight: 1 }}>
+                        {parseFloat(autoP2P.price).toLocaleString("es-CO")}
+                      </p>
+                      <p style={{ color: "#555", fontSize: 12 }}>COP</p>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
+                      <p style={{ color: "#555", fontSize: 11 }}>👤 <span style={{ color: "#888" }}>{autoP2P.seller}</span></p>
+                      <p style={{ color: "#555", fontSize: 11 }}>Min: <span style={{ color: "#888" }}>${autoP2P.minAmount?.toLocaleString("en-US")}</span></p>
+                      <p style={{ color: "#555", fontSize: 11 }}>Max: <span style={{ color: "#888" }}>${autoP2P.maxAmount?.toLocaleString("en-US")}</span></p>
+                    </div>
+                    <p style={{ color: "#333", fontSize: 10, marginTop: 6 }}>
+                      🔄 Actualiza cada 3 min · {autoP2P.updatedAt ? new Date(autoP2P.updatedAt).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }) : ""}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div>
+                <input
+                  type="number"
+                  placeholder="Ingresa precio P2P..."
+                  value={manualP2P}
+                  onChange={(e) => setManualP2P(e.target.value)}
+                  onBlur={() => {
+                    if (manualP2P && parseFloat(manualP2P) > 0) {
+                      const entry = { p2p: parseFloat(manualP2P), trm: trmValue, spread: spreadNum.toFixed(2) };
+                      saveHistory(entry);
+                      setHistory(getHistory());
+                    }
+                  }}
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    background: "rgba(0,0,0,0.4)", border: "none",
+                    borderRadius: 14, padding: "12px 14px",
+                    color: "#facc15", fontSize: 28, fontWeight: 800,
+                    outline: "none", fontFamily: "Outfit, sans-serif",
+                    MozAppearance: "textfield", appearance: "none",
+                  }}
+                />
+                <p style={{ color: "#444", fontSize: 11, marginTop: 6 }}>
+                  Estimado: {Math.round(trmValue * 1.032).toLocaleString("es-CO")} COP
+                </p>
+              </div>
             )}
           </motion.div>
 
